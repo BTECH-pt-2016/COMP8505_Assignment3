@@ -1,7 +1,5 @@
 from scapy.all import *
-from dcutils import parse_port_to_data
-
-
+from utils import parse_port_to_data
 
 #this variable has to be length of 8
 PORT_KNOCKER = [8000,7000,6000,5000,4000,3000,2000,1000]
