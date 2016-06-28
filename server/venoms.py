@@ -115,7 +115,7 @@ def open_connection_for_inotify():
         if filesizeAndName:
             filesizeAndNameArray = filesizeAndName.split(' ')
             fs = filesizeAndNameArray[1]
-            with open(filesizeAndNameArray[0], "wb") as f:
+            with open(server_config.INOTIFY_FOLDER+filesizeAndNameArray[0], "wb") as f:
                 dr = NOTIFY_SOCKET.recv(1024)
                 f.write(dr)
                 totalFS = len(dr)

@@ -2,7 +2,6 @@ import server_config
 from scapy.all import *
 from utils import parse_port_to_data
 
-#this variable has to be length of 8
 PORT_KNOCKER_INDEX = 0
 PORT_KNOCKER_TIME = 0
 SOURCE_IP = 0
