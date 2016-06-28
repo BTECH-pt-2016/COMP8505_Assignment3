@@ -1,8 +1,8 @@
+import server_config
 from scapy.all import *
 from utils import parse_port_to_data
 
 #this variable has to be length of 8
-PORT_KNOCKER = [8000,7000,6000,5000,4000,3000,2000,1000]
 PORT_KNOCKER_INDEX = 0
 PORT_KNOCKER_TIME = 0
 SOURCE_IP = 0
@@ -22,7 +22,7 @@ def check_packet(pkt):
         else:
             update_port_knocker_variables(pkt['UDP'].sport)
             #if it is the last port knocking packet
-            if PORT_KNOCKER_INDEX >= len(PORT_KNOCKER):
+            if PORT_KNOCKER_INDEX >= len(server_config.PORT_KNOCK_ARRAY):
                 PORT_KNOCKER_INDEX = 0
 	#if it does not arrive within 2 second after the last packet arrival
     else:

