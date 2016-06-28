@@ -1,8 +1,12 @@
 ## How to use
 1.start server/venoms.py
+
 2.set DESTINATION on client/client_config.py
+
 (if server ip is 192.168.0.1 then sent DESTINATION = "192.168.0.1")
+
 3.start client/xenophid.py
+
 4.send commands from the server
 
 ###Commands
